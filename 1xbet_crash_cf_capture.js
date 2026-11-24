@@ -34,8 +34,11 @@ function describeShape(value) {
     return typeof value;
 }
 
+
+const MAX_EVENTS = 1000;
+let logQueue = Promise.resolve();
+
 function logEventShape(payload) {
-    // Record event names and field names only; do not persist account/session values.
     const record = {
         receivedAt: new Date().toISOString(),
         type: payload.type ?? null,
@@ -45,10 +48,28 @@ function logEventShape(payload) {
             : [],
     };
 
-    fs.appendFile("websocket-events.jsonl", JSON.stringify(record) + "\n", (err) => {
-        if (err) console.error("Could not write websocket-events.jsonl:", err.message);
+    logQueue = logQueue.then(async () => {
+        const file = "websocket-events.jsonl";
+
+        await fs.promises.appendFile(
+            file,
+            JSON.stringify(record) + "\n"
+        );
+
+        const content = await fs.promises.readFile(file, "utf8");
+        const lines = content.split(/\r?\n/).filter(Boolean);
+
+        if (lines.length > MAX_EVENTS) {
+            await fs.promises.writeFile(
+                file,
+                lines.slice(-MAX_EVENTS).join("\n") + "\n"
+            );
+        }
+    }).catch((err) => {
+        console.error("Event log error:", err.message);
     });
 }
+
 
 // Read the public game totals from the game iframe.
 async function scrapeDivData(page) {
@@ -135,6 +156,12 @@ async function getWsEndpoint() {
             seenCrashRounds.add(roundId);
 
             const multiplier = crash.f;
+            // Notify the separate desktop monitor only after the game sends its actual OnCrash event.
+            fetch("http://127.0.0.1:3035/event", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ kind: "crash", roundId, multiplier, receivedAt: new Date().toISOString() }),
+            }).catch((error) => console.warn("Monitor notification failed:", error.message));
             const date = new Date(crash.ts);
             if (Number.isNaN(date.getTime())) {
                 console.warn("Skipping OnCrash message with an invalid timestamp.");
