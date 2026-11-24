@@ -1,51 +1,88 @@
 const puppeteer = require("puppeteer-extra");
 const launch = require("./launch");
-const fs = require('fs');
-const { format, subHours } = require('date-fns');
-const wait = (ms) => new Promise(res => setTimeout(res, ms));
+const fs = require("fs");
+const { format, subHours } = require("date-fns");
 
-// Get WebSocket endpoint
-async function getWsEndpoint() {
-    console.log("Launching browser...");
-    let wsEndpoint = await launch();
-    console.log("WebSocket endpoint obtained:", wsEndpoint);
-    return wsEndpoint;
+const GAME_URL = "https://eg1xbet.com/ar/games/crash";
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+const seenCrashRounds = new Set();
+
+function parseWebSocketPayload(raw) {
+    const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
+
+    // SignalR separates multiple protocol messages in one WebSocket frame with 0x1e.
+    return text
+        .split("\x1e")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .flatMap((part) => {
+            try {
+                const parsed = JSON.parse(part);
+                return Array.isArray(parsed) ? parsed : [parsed];
+            } catch {
+                return [];
+            }
+        });
 }
 
-// Function to scrape the div data from the iframe
-async function scrapeDivData(page) {
-    // Attendre que l'iframe soit chargé
-    await page.waitForSelector('iframe.games-project-frame__item');
+function describeShape(value) {
+    if (value === null) return "null";
+    if (Array.isArray(value)) return `array[${value.length}]`;
+    if (typeof value === "object") {
+        return `object{${Object.keys(value).sort().join(",")}}`;
+    }
+    return typeof value;
+}
 
-    // Obtenir l'iframe
-    const frame = page.frames().find(f => f.url().includes('/games-frame/games/371'));
+function logEventShape(payload) {
+    // Record event names and field names only; do not persist account/session values.
+    const record = {
+        receivedAt: new Date().toISOString(),
+        type: payload.type ?? null,
+        target: payload.target ?? null,
+        argumentShapes: Array.isArray(payload.arguments)
+            ? payload.arguments.map(describeShape)
+            : [],
+    };
+
+    fs.appendFile("websocket-events.jsonl", JSON.stringify(record) + "\n", (err) => {
+        if (err) console.error("Could not write websocket-events.jsonl:", err.message);
+    });
+}
+
+// Read the public game totals from the game iframe.
+async function scrapeDivData(page) {
+    await page.waitForSelector("iframe.games-project-frame__item", { timeout: 60000 });
+
+    const frame = page.frames().find((item) =>
+        item.url().includes("/games-frame/games/371")
+    );
 
     if (!frame) {
-        console.error("Iframe non trouvé");
-        return { totalPlayers: 'N/A', totalBets: 'N/A', totalPrize: 'N/A' };
+        return { totalPlayers: "N/A", totalBets: "N/A", totalPrize: "N/A" };
     }
 
-    // Attendre que le contenu de l'iframe soit chargé
-    await frame.waitForSelector('.crash-total__value--players', { timeout: 10000 });
+    await frame.waitForSelector(".crash-total__value--players", { timeout: 10000 });
 
-    const data = await frame.evaluate(() => {
+    return frame.evaluate(() => {
         function safeGetText(selector) {
             const element = document.querySelector(selector);
-            return element ? element.innerText : 'N/A';
+            return element ? element.innerText.trim() : "N/A";
         }
 
-        const totalPlayers = safeGetText('.crash-total__value--players');
-        const totalBets = safeGetText('.crash-total__value--bets');
-        const totalPrize = safeGetText('.crash-total__value--prize');
-
         return {
-            totalPlayers,
-            totalBets,
-            totalPrize
+            totalPlayers: safeGetText(".crash-total__value--players"),
+            totalBets: safeGetText(".crash-total__value--bets"),
+            totalPrize: safeGetText(".crash-total__value--prize"),
         };
     });
+}
 
-    return data;
+async function getWsEndpoint() {
+    console.log("Launching browser...");
+    const wsEndpoint = await launch();
+    console.log("WebSocket endpoint obtained:", wsEndpoint);
+    return wsEndpoint;
 }
 
 (async () => {
@@ -53,75 +90,90 @@ async function scrapeDivData(page) {
 
     const browserWSEndpoint = await getWsEndpoint();
     console.log("Connecting to browser with WebSocket endpoint...");
+
     const browser = await puppeteer.connect({
         browserWSEndpoint,
         defaultViewport: null,
     });
 
     console.log("Opening new page...");
-    let page = await browser.newPage();
-    console.log("Navigating to the URL...");
-    await page.goto("https://1xbet.com/fr/allgamesentrance/crash", { waitUntil: 'networkidle0' });
+    const page = await browser.newPage();
 
-    // Attendez que l'iframe soit chargé
-    await page.waitForSelector('iframe.games-project-frame__item');
+    console.log("Navigating to the game...");
+    await page.goto(GAME_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+    });
+
+    await page.waitForSelector("iframe.games-project-frame__item", {
+        timeout: 60000,
+    });
 
     const client = await page.target().createCDPSession();
+    await client.send("Network.enable");
+    console.log("Network monitoring enabled.");
 
-    console.log("Enabling Network...");
-    await client.send('Network.enable');
+    client.on("Network.webSocketFrameReceived", async ({ response }) => {
+        const payloads = parseWebSocketPayload(response.payloadData);
 
-    client.on('Network.webSocketFrameReceived', async ({ requestId, timestamp, response }) => {
-        console.log("↑↑↑↑↑");
-        let payloadString = response.payloadData.toString('utf8');
-    
-        try {
-            // Remove non-printable characters
-            payloadString = payloadString.replace(/[^\x20-\x7E]/g, '');
-            const payload = JSON.parse(payloadString);
-            
-            // Check if payload is of the correct type and target
-            if (payload.type === 1 && payload.target === "OnCrash") {
-                const { l, f, ts } = payload.arguments[0];
-                console.log(payload.arguments);
+        for (const payload of payloads) {
+            if (!payload || typeof payload !== "object") continue;
 
-                const date = new Date(ts);
-                const dateMinusOneHour = subHours(date, 1);
-                const formattedTime = format(dateMinusOneHour, 'HH:mm');
+            // Keep a schema-only trace of every parsed SignalR message.
+            logEventShape(payload);
 
-                // Scrape the div data
-                let scrapedData;
-                try {
-                    scrapedData = await scrapeDivData(page);
-                    console.log("Scraped Data:", scrapedData);
-                } catch (scrapeError) {
-                    console.error("Error scraping data:", scrapeError);
-                    scrapedData = { totalPlayers: 'N/A', totalBets: 'N/A', totalPrize: 'N/A' };
-                }
+            if (payload.type !== 1 || payload.target !== "OnCrash") continue;
 
-                const csvData = `${formattedTime},${scrapedData.totalPlayers},${scrapedData.totalBets},${f},${scrapedData.totalPrize},${l}\n`;
-                const txtData = `${f}\n`;
-                console.log("❌");
-                
-                // Append to CSV
-                fs.appendFile('data.csv', csvData, (err) => {
-                    if (err) throw err;
-                    console.log('Data appended to CSV file');
-                });
-
-                // Append to TXT
-                fs.appendFile('data.txt', txtData, (err) => {
-                    if (err) throw err;
-                    console.log('❌❌', txtData, '❌❌');
-                });
+            const crash = payload.arguments?.[0];
+            if (!crash || crash.l === undefined || crash.f === undefined || crash.ts === undefined) {
+                console.warn("OnCrash message did not contain the expected l/f/ts fields.");
+                continue;
             }
-        } catch (error) {
-            console.error('Error processing WebSocket frame:', error);
+
+            const roundId = String(crash.l);
+            if (seenCrashRounds.has(roundId)) continue;
+            seenCrashRounds.add(roundId);
+
+            const multiplier = crash.f;
+            const date = new Date(crash.ts);
+            if (Number.isNaN(date.getTime())) {
+                console.warn("Skipping OnCrash message with an invalid timestamp.");
+                continue;
+            }
+
+            // Preserve the original one-hour adjustment used by the source project.
+            const formattedTime = format(subHours(date, 1), "HH:mm");
+
+            let scrapedData;
+            try {
+                scrapedData = await scrapeDivData(page);
+            } catch (error) {
+                console.error("Error scraping public game totals:", error.message);
+                scrapedData = {
+                    totalPlayers: "N/A",
+                    totalBets: "N/A",
+                    totalPrize: "N/A",
+                };
+            }
+
+            const csvData = `${formattedTime},${scrapedData.totalPlayers},${scrapedData.totalBets},${multiplier},${scrapedData.totalPrize},${roundId}\n`;
+
+            fs.appendFile("data.csv", csvData, (err) => {
+                if (err) console.error("Could not append data.csv:", err.message);
+                else console.log(`Saved crash result for round ${roundId}: ${multiplier}x`);
+            });
+
+            fs.appendFile("data.txt", `${multiplier}\n`, (err) => {
+                if (err) console.error("Could not append data.txt:", err.message);
+            });
         }
     });
 
-    console.log("Starting main loop...");
+    console.log("Capture is running. Press Ctrl+C to stop.");
     while (true) {
         await wait(1000);
     }
-})();
+})().catch((error) => {
+    console.error("Capture stopped because of an error:", error);
+    process.exitCode = 1;
+});
