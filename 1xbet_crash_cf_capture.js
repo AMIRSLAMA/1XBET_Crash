@@ -148,7 +148,7 @@ async function getWsEndpoint() {
                 multiplier,
                 sourceTimestamp: date.toISOString(),
             };
-            fs.appendFile("crash-results.jsonl", JSON.stringify(resultRecord) + "\\n", (err) => {
+            fs.appendFile("crash-results.jsonl", JSON.stringify(resultRecord) + "\n", (err) => {
                 if (err) console.error("Could not append crash-results.jsonl:", err.message);
             });
 
