@@ -104,12 +104,12 @@ else if(d.kind==="reset")clearAlarm()
 </html>`;
 
 const server = http.createServer((req,res)=>{
-  if(req.method==="GET" && req.url==="/"){
+  if(req.method==="GET" && new URL(req.url, 'http://127.0.0.1').pathname==="/"){
     res.writeHead(200,{"content-type":"text/html; charset=utf-8"});
     return res.end(html);
   }
 
-  if(req.method==="GET" && req.url==="/events"){
+  if(req.method==="GET" && new URL(req.url, 'http://127.0.0.1').pathname==="/events"){
     res.writeHead(200,{
       "content-type":"text/event-stream",
       "cache-control":"no-cache",
@@ -121,7 +121,7 @@ const server = http.createServer((req,res)=>{
     return;
   }
 
-  if(req.method==="POST" && req.url==="/event"){
+  if(req.method==="POST" && new URL(req.url, 'http://127.0.0.1').pathname==="/event"){
     let body="";
     req.on("data",c=>body+=c);
     req.on("end",()=>{
