@@ -141,6 +141,17 @@ async function getWsEndpoint() {
                 continue;
             }
 
+            // Store one normalized historical record per round for easier review.
+            const resultRecord = {
+                capturedAt: new Date().toISOString(),
+                roundId,
+                multiplier,
+                sourceTimestamp: date.toISOString(),
+            };
+            fs.appendFile("crash-results.jsonl", JSON.stringify(resultRecord) + "\\n", (err) => {
+                if (err) console.error("Could not append crash-results.jsonl:", err.message);
+            });
+
             // Preserve the original one-hour adjustment used by the source project.
             const formattedTime = format(subHours(date, 1), "HH:mm");
 
