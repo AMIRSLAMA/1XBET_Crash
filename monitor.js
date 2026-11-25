@@ -11,7 +11,7 @@ const html = String.raw`<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ù…Ø±Ø§Ù‚Ø¨Ø© Ø§Ù„Ù„Ø¹Ø¨Ø©</title>
+<title>مراقبة اللعبة</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;background:#090b10;color:#fff;font-family:Tahoma,Arial;display:grid;place-items:center}
@@ -29,15 +29,15 @@ body.danger .label{color:#ff3447;animation:pulse .55s infinite alternate}
 </style>
 </head>
 <body>
-<button class="refresh" onclick="location.reload()">ØªØ­Ø¯ÙŠØ« Ø§Ù„ØµÙØ­Ø© â†»</button>
+<button class="refresh" onclick="location.reload()">تحديث الصفحة ↻</button>
 <main>
 <div class="circle">
 <svg viewBox="0 0 24 24">
 <path d="M12 2 1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2V9h2v4z"/>
 </svg>
 </div>
-<div class="label" id="label">Ù…Ø±Ø§Ù‚Ø¨Ø©</div>
-<div class="small" id="status">ÙÙŠ Ø§Ù†ØªØ¸Ø§Ø± Ø£Ø­Ø¯Ø§Ø« Ø§Ù„Ù„Ø¹Ø¨Ø©</div>
+<div class="label" id="label">مراقبة</div>
+<div class="small" id="status">في انتظار أحداث اللعبة</div>
 </main>
 
 <script>
@@ -68,8 +68,8 @@ osc.frequency.setTargetAtTime(high?1050:620,audio.currentTime,.06)
 
 function alarm(data){
 document.body.classList.add("danger");
-document.getElementById("label").textContent="ØªÙ… Ø§Ù„Ø±ØµØ¯";
-document.getElementById("status").textContent="ØªÙ… Ø±ØµØ¯ Ù†Ù‡Ø§ÙŠØ© Ø§Ù„Ø¬ÙˆÙ„Ø© ÙØ¹Ù„ÙŠÙ‹Ø§ Â· "+(data.roundId||"");
+document.getElementById("label").textContent="تم الرصد";
+document.getElementById("status").textContent="تم رصد نهاية الجولة فعليًا · "+(data.roundId||"");
 siren()
 }
 
@@ -79,8 +79,8 @@ clearTimeout(window._alarmTimeout);
 window._alarmTimeout=null
 }
 document.body.classList.remove("danger");
-document.getElementById("label").textContent="Ù…Ø±Ø§Ù‚Ø¨Ø©";
-document.getElementById("status").textContent="ÙÙŠ Ø§Ù†ØªØ¸Ø§Ø± Ø§Ù„Ø¬ÙˆÙ„Ø© Ø§Ù„ØªØ§Ù„ÙŠØ©";
+document.getElementById("label").textContent="مراقبة";
+document.getElementById("status").textContent="في انتظار الجولة التالية";
 if(window._siren)clearInterval(window._siren);
 if(osc){
 try{osc.stop()}catch(e){}
